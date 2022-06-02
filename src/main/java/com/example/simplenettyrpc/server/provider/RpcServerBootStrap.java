@@ -28,11 +28,14 @@ public class RpcServerBootStrap extends NettyServer implements ApplicationContex
 
     @Override
     public void destroy() throws Exception {
+        //销毁Bean时，允许释放一些已打开的资源，调用stop方法先停止NettyServer
+        super.stop();
     }
 
     @Override
     public void afterPropertiesSet() throws Exception {
-
+        //当所有的属性完成赋值，以及final属性被初始化之后，调用start启动NettyServer
+        super.start();
     }
 
     /**

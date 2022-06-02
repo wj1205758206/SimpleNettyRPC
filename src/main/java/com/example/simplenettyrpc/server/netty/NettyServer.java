@@ -6,12 +6,14 @@ import io.netty.channel.ChannelOption;
 import io.netty.channel.EventLoopGroup;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
+import io.netty.util.concurrent.Future;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 
 /**
  * RPC Server底层是基于Netty的Server
@@ -21,6 +23,7 @@ public class NettyServer {
 
     private String host;
     private int port;
+    private ServerBootstrap serverBootstrap;
     private Map<String, Object> rpcServiceMap = new HashMap<>();
 
     public NettyServer(String host, int port) {
@@ -35,14 +38,19 @@ public class NettyServer {
             rpcServiceKey = rpcServiceKey + "$" + version;
         }
         rpcServiceMap.put(rpcServiceKey, rpcService);
+        logger.info("RPC service add to map, rpcServiceKey:{}, rpcService:{}", rpcServiceKey, rpcService);
     }
 
-    private void start(String host, int port) {
+    /**
+     * 启动NettyServer
+     */
+    public void start() {
+        logger.info("RPC Server starting...");
         EventLoopGroup bossGroup = new NioEventLoopGroup(1); // 创建一个boss group
         EventLoopGroup workerGroup = new NioEventLoopGroup(); // 默认创建 CPU核心 * 2 个worker group
 
         try {
-            ServerBootstrap serverBootstrap = new ServerBootstrap();
+            serverBootstrap = new ServerBootstrap();
             serverBootstrap.group(bossGroup, workerGroup)
                     .channel(NioServerSocketChannel.class)
                     .childHandler(new RpcServerChannelInitializer(this.rpcServiceMap))
@@ -50,13 +58,35 @@ public class NettyServer {
                     .childOption(ChannelOption.SO_KEEPALIVE, true);
 
             ChannelFuture channelFuture = serverBootstrap.bind(host, port).sync();
+            logger.info("Bind host:{}, port:{}, started", host, port);
             channelFuture.channel().closeFuture().sync();
         } catch (Exception e) {
             logger.error("start netty server exception: " + e.getMessage());
         } finally {
             bossGroup.shutdownGracefully();
             workerGroup.shutdownGracefully();
+            logger.info("RPC Server shutdown gracefully");
         }
+    }
 
+    /**
+     * 关闭NettyServer
+     */
+    public void stop() {
+        try {
+            EventLoopGroup eventLoopGroup = serverBootstrap.group();
+            if (!eventLoopGroup.isShutdown() || !eventLoopGroup.isTerminated()) {
+                //优雅关闭，2s确保正在执行的task被提交
+                Future<?> future = eventLoopGroup.shutdownGracefully(2, 5, TimeUnit.SECONDS);
+                if (future.isSuccess()) {
+                    serverBootstrap = null; //置为null，方便GC
+                    logger.info("RPC Server shutdown gracefully");
+                    return;
+                }
+                logger.error("ServerBootstrap shutdown gracefully fail");
+            }
+        } catch (Exception e) {
+            logger.error("RPC Server stop fail: " + e.getMessage());
+        }
     }
 }
